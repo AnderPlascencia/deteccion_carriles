@@ -4,7 +4,6 @@ from math import hypot
 import socket
 import time
 
-
 def switcher_keys(var):
     switcher = {
         119:"w",
