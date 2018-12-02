@@ -38,29 +38,30 @@ rojo_altos2 = np.array([256, 255, 255], dtype=np.uint8)
 X=0
 contador=10
 mensaje = ""
+
+#velocida maxima de motor
 v_max=50.0
-#352
 
 print("Esperando mensaje...")
 data, addr = sock.recvfrom(7)
+
 #print "received from ", addr
 #print "mensaje recibido: ", data, " longitud de dato: ", len(data)
 #print addr
 
 #lectura de camara celular
 cap = cv2.VideoCapture("rtsp://192.168.43.67:8554/live.sdp") #streaming
-#cap=cv2.VideoCapture("carriles7.mp4")
 
 while(True):
     start_time = time.time() 
     ret, frame = cap.read()
     if not ret:
-    #condicional para que no despliegue error al no cargar frame 
-        print("no lee video")
+        #Reanudar conexion con camara 
+        print("Sin lectura de video, reanudando conexion...")
         cap = cv2.VideoCapture("rtsp://192.168.43.67:8554/live.sdp")
-        #cap=cv2.VideoCapture("carriles7.mp4")
         continue
     else:
+        #despliega las dimensiones de imagen recibida
         #print('This image is:', type(frame), 'with dimesions:', frame.shape[1], frame.shape[0])
 
 
@@ -68,12 +69,18 @@ while(True):
         croped= frame.copy()
         recorte=frame.copy()
         recorte_rojo=frame.copy()
+        
+        #recorte de ROI deteccion de lineas 
         mask = np.zeros(croped.shape[:2], np.uint8)
         cv2.drawContours(mask, [puntos], -1, (255, 255, 255), -1, cv2.LINE_AA)
+        
+        #recorte de ROI deteccion de rojos
         mascara= np.zeros(recorte_rojo.shape[:2], np.int8)
         cv2.drawContours(mascara, [pts], -1, (255, 255, 255), -1, cv2.LINE_AA)
+        
         #suavizado de imagen para evitar ruido
         rect_image=cv2.GaussianBlur(croped,(11, 11), 0)
+        
         #cambio a escala degrises
         rect_image= cv2.cvtColor(rect_image, cv2.COLOR_BGR2GRAY)
 
@@ -83,22 +90,23 @@ while(True):
     #definir kernel para mascara de rojos
         kernel = np.ones((1,1),np.uint8)
         
-    ## (3) do bit-op
+    # do bit-op
         masked=cv2.bitwise_and(croped, croped, mask=mask)
-        dst = cv2.bitwise_and(edges, edges, mask=mask)
-        lines = cv2.HoughLinesP(dst,1,np.pi/180,10, maxLineGap=50)
+        dst = cv2.bitwise_and(edges, edges, mask=mask)#mascara de deteccion de rojos 
+        lines = cv2.HoughLinesP(dst,1,np.pi/180,10, maxLineGap=50)#deteccion de lineas de Hough en mascara de bordes
         mascara2=cv2.bitwise_and(recorte_rojo, recorte_rojo, mask=mascara)
 
 
-    #cambio a HSV
+        #cambio a HSV
         hsv = cv2.cvtColor(mascara2, cv2.COLOR_BGR2HSV)
-
+    
         mask1 = cv2.inRange(hsv, rojo_bajos1, rojo_altos1)
         mask2 = cv2.inRange(hsv, rojo_bajos2, rojo_altos2)
         mask3 = cv2.morphologyEx(mask1, cv2.MORPH_OPEN, kernel)
         mask4 = cv2.morphologyEx(mask2, cv2.MORPH_CLOSE, kernel)
         mask5 = cv2.add(mask3, mask4)
 
+        #declaracion de variables para maximo tamaño de linea derecha e izquierda
         maxsizeL=0
         maxsizeR=0
         """
@@ -119,7 +127,10 @@ while(True):
                 max_left_line=(x1, y1, x2, y2)
                 maxsizeL=size
         """
+        
         height, width = frame.shape[:2]
+        
+        #Obtener lineas dominantes de cada carril y dibujarlas 
         if lines is not None:
             for line in lines:
                 x1, y1, x2, y2 = line[0]
@@ -136,7 +147,7 @@ while(True):
                         maxsizeR=size
         
 
-    #dibujar linea derecha e izquierda
+    #dibujar linea derecha e izquierda dominante y obtencion de promedio
         if max_right_line is not None and max_left_line is not None:
             cv2.line(recorte,(max_right_line[0], max_right_line[1]), (max_right_line[2], max_right_line[3]),(244, 133, 63), 8)
             cv2.line(recorte,(max_left_line[0], max_left_line[1]), (max_left_line[2], max_left_line[3]),(83, 168, 52), 8)
@@ -145,24 +156,30 @@ while(True):
             if len(avgValue)>5:
                 avgValue.pop(0)
                 X = int(np.mean(avgValue))
+                
         #print "length array", len(avgValue), "value", avgValue
+        
+        #trazado de centro de carriles detectados
         cv2.line(recorte, (X, height-100), (X, height-100), (0, 255, 255), 8)
+        
         height, width = frame.shape[:2]
+        #trazado de centro de imagen 
         cv2.line(recorte, (width/2, height-100),(width/2, height-100), (0, 0, 255),8)
         
-        if X==width/2:
+        if X==width/2:#centro de carril detectado igual a centro de la imagen
             mensaje = `str(int(v_max))+ " " + str(int(v_max))`
             print "mensaje", mensaje
         else:
-            diferencia=X-width/2    
-
+            diferencia=X-width/2 #valor de separacion de carril detectado a centro de imagen
+    
+        #velocidad de motor para ajustar a centro de carril 
         v_min =int(round((1.0-(abs(diferencia)/70.0))*v_max, 0))
         if v_min<20:
             v_min=20
         #print "vmin", v_min , "diferencia", diferencia
-
+        
+        #ajuste para envio de velocidad con 3 digitos 
         missing = 3-len(str(v_min))
-     
         while(missing>0):
             v_min = '0'+str(v_min)
             missing-=1	
@@ -176,6 +193,7 @@ while(True):
         contador+=1
         #print `contador%100`+ mensaje
         
+        #deteccion de tecla 'q' para salir de ciclo y 
         key=switcher_keys(cv2.waitKey(1))
         if key is not None:
             print (key)
@@ -183,9 +201,9 @@ while(True):
                 break
         
         contador=10 if contador==99 else contador
-        sock.sendto(mensaje, addr)
+        sock.sendto(mensaje, addr)#Envio de velocidad 
         print mensaje
-        cv2.imshow("original", recorte)
+        cv2.imshow("original", recorte)#desplegar imagen 
 
 
         #cv2.imshow("mascara rojos", mask5)
@@ -194,7 +212,7 @@ while(True):
         #cv2.imshow("croped", masked)
         
         
-        #print("-----%s segundo de ejecuccion    ----" % (time.time()-start_time))
+        #print("-----%s segundo de ejecuccion    ----" % (time.time()-start_time))#tiempo de ejecucion de ciclo
 
 #socket.close() cerrar socket
 cap.release()
